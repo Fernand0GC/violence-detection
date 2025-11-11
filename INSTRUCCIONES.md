@@ -36,18 +36,26 @@ La aplicación se abrirá automáticamente en `http://localhost:3000`
 
 ### ✅ Detección en Tiempo Real
 - Análisis continuo de video desde tu cámara web
-- Detección de cuchillos (clase 0)
-- Cuadros delimitadores sobre objetos detectados
+- Detección de cuchillos (clase 0) - Cuadros rojos
+- Detección de pistolas (clase 1) - Cuadros naranjas
+- Cuadros delimitadores sobre objetos detectados con etiquetas de confianza
 
 ### 🚦 Semáforo de Peligro
 - **🟢 VERDE:** Seguro - No hay detecciones
 - **🟡 AMARILLO:** Advertencia - Confianza media (50-80%)
-- **🔴 ROJO:** Peligro - Cuchillo detectado con alta confianza (>80%)
+- **🔴 ROJO:** Peligro - Arma detectada con alta confianza (>80%)
 
 ### 🔊 Sistema de Alertas
 - Alerta visual en la esquina superior derecha
 - Sonido de alerta (si está habilitado en el navegador)
-- Se activa automáticamente al detectar un cuchillo con >80% confianza
+- Se activa automáticamente al detectar cualquier arma con >80% confianza
+
+### 📸 Guardado de Imágenes
+- **Toggle opcional** para habilitar/deshabilitar guardado automático
+- Captura automática cada 2 segundos cuando se detecta un arma (si está habilitado)
+- Imágenes nombradas según tipo: `cuchillo_*.jpg`, `pistola_*.jpg`, `multiple_*.jpg`
+- Muestra miniatura de las últimas 20 capturas
+- Contador de cuchillos y pistolas en cada foto
 
 ### 📊 Gráficas y Reportes
 1. **Probabilidad en Tiempo Real:** Línea que muestra la confianza de detección momento a momento
@@ -55,30 +63,50 @@ La aplicación se abrirá automáticamente en `http://localhost:3000`
 3. **Distribución:** Gráfica circular comparando detecciones vs frames sin detección
 4. **Resumen de Sesión:** Estadísticas completas de la sesión actual
 
-### 📈 Panel de Estadísticas
-- Total de cuchillos detectados
+### 📊 Panel de Estadísticas
+- Total de cuchillos detectados (🔪)
+- Total de pistolas detectadas (🔫)
+- Total de armas detectadas (suma)
 - Confianza actual del modelo
-- Total de frames analizados
+- Detecciones activas en frame actual
 - Estado del sistema en tiempo real
 
 ## ⚙️ Configuración Personalizada
 
+### Habilitar/Deshabilitar Guardado Automático
+
+**Desde la Interfaz:**
+- Usa el checkbox "📸 Guardar imágenes automáticamente al detectar armas" en la sección de configuración
+- Por defecto está **habilitado**
+- Puedes activarlo/desactivarlo en cualquier momento sin detener la detección
+
 ### Ajustar el Umbral de Confianza
 
-Edita `src/App.jsx`, línea ~110:
+Edita `src/App.jsx`, línea 21:
 ```javascript
-const threshold = 0.5 // Cambia este valor (0.0 a 1.0)
+const CONFIDENCE_THRESHOLD = 0.6 // Cambia este valor (0.0 a 1.0)
 ```
 - Valores más bajos: Más sensible (más falsas alarmas)
 - Valores más altos: Menos sensible (puede perder detecciones)
 
 ### Ajustar Tamaño de Entrada del Modelo
 
-Edita `src/App.jsx`, línea ~106:
+El modelo YOLO11 usa entrada de 640x640. Si tu modelo usa otro tamaño, edita `src/App.jsx`, línea ~283:
 ```javascript
-const resized = tf.image.resizeBilinear(img, [224, 224])
+const resized = tf.image.resizeBilinear(tfImg, [640, 640])
 ```
-Cambia `[224, 224]` al tamaño que tu modelo necesite.
+Cambia `[640, 640]` al tamaño que tu modelo necesite.
+
+### Soporte Multi-Clase
+
+El sistema ahora soporta:
+- **Modelos con 1 clase** (formato antiguo): `[1, 5, 8400]` o `[1, 8400, 5]`
+  - Solo cuchillos (clase 0)
+- **Modelos con 2 clases** (nuevo formato): `[1, 6, 8400]` o `[1, 8400, 6]`
+  - Clase 0: Cuchillos
+  - Clase 1: Pistolas
+  
+El sistema detecta automáticamente el formato y se adapta.
 
 ### Modificar Niveles de Alerta
 

@@ -27,9 +27,11 @@ const App = () => {
   const [dangerLevel, setDangerLevel] = useState('safe')
   const [detections, setDetections] = useState([])
   const [totalKnives, setTotalKnives] = useState(0)
+  const [totalGuns, setTotalGuns] = useState(0)
   const [showAlert, setShowAlert] = useState(false)
   const [detectionHistory, setDetectionHistory] = useState([])
   const [capturedPhotos, setCapturedPhotos] = useState([])
+  const [autoSaveImages, setAutoSaveImages] = useState(true)
 
   // ============================================================
   // Inicialización
@@ -91,7 +93,7 @@ const App = () => {
   }
 
   // ============================================================
-  // 3️⃣ Decodificar salida YOLO11 ([1,5,8400])
+  // 3️⃣ Decodificar salida YOLO11 ([1,6,8400] o [1,8400,6] para 2 clases)
   // ============================================================
   const decodeYOLOOutput = async (predictions, imgWidth, imgHeight, confThreshold = CONFIDENCE_THRESHOLD) => {
     const flat = await predictions.data()
@@ -105,19 +107,27 @@ const App = () => {
     const detections = []
     let numAnchors, numAttrs
 
-    if (d1 === 5) {
+    // Formato: [1, 6, 8400] - x, y, w, h, conf_cuchillo, conf_pistola
+    if (d1 === 6) {
       numAnchors = d2
       numAttrs = d1
       if (frameCount.current === 1) {
-        console.log("✅ Formato detectado: [1, 5, 8400]")
+        console.log("✅ Formato detectado: [1, 6, 8400] - 2 clases")
       }
       for (let i = 0; i < numAnchors; i++) {
         const x_center = flat[0 * numAnchors + i]
         const y_center = flat[1 * numAnchors + i]
         const width = flat[2 * numAnchors + i]
         const height = flat[3 * numAnchors + i]
-        const conf = flat[4 * numAnchors + i]
-        if (conf < confThreshold) continue
+        const conf_knife = flat[4 * numAnchors + i]
+        const conf_gun = flat[5 * numAnchors + i]
+        
+        // Determinar clase con mayor confianza
+        const maxConf = Math.max(conf_knife, conf_gun)
+        if (maxConf < confThreshold) continue
+        
+        const classId = conf_knife > conf_gun ? 0 : 1
+        const confidence = maxConf
 
         // 🚀 Coordenadas absolutas (0–640) → escalar a canvas
         const scaleX = imgWidth / 640
@@ -128,13 +138,72 @@ const App = () => {
         const w = width * scaleX
         const h = height * scaleY
 
-        detections.push({ x, y, w, h, confidence: conf })
+        detections.push({ x, y, w, h, confidence, class: classId })
+      }
+    }
+    // Formato: [1, 8400, 6]
+    else if (d2 === 6) {
+      numAnchors = d1
+      numAttrs = d2
+      if (frameCount.current === 1) {
+        console.log("✅ Formato detectado: [1, 8400, 6] - 2 clases")
+      }
+      for (let i = 0; i < numAnchors; i++) {
+        const offset = i * numAttrs
+        const x_center = flat[offset + 0]
+        const y_center = flat[offset + 1]
+        const width = flat[offset + 2]
+        const height = flat[offset + 3]
+        const conf_knife = flat[offset + 4]
+        const conf_gun = flat[offset + 5]
+        
+        const maxConf = Math.max(conf_knife, conf_gun)
+        if (maxConf < confThreshold) continue
+        
+        const classId = conf_knife > conf_gun ? 0 : 1
+        const confidence = maxConf
+
+        const scaleX = imgWidth / 640
+        const scaleY = imgHeight / 640
+
+        const x = (x_center - width / 2) * scaleX
+        const y = (y_center - height / 2) * scaleY
+        const w = width * scaleX
+        const h = height * scaleY
+
+        detections.push({ x, y, w, h, confidence, class: classId })
+      }
+    }
+    // Formato antiguo: [1, 5, 8400] - solo una clase (cuchillos)
+    else if (d1 === 5) {
+      numAnchors = d2
+      numAttrs = d1
+      if (frameCount.current === 1) {
+        console.log("✅ Formato detectado: [1, 5, 8400] - 1 clase")
+      }
+      for (let i = 0; i < numAnchors; i++) {
+        const x_center = flat[0 * numAnchors + i]
+        const y_center = flat[1 * numAnchors + i]
+        const width = flat[2 * numAnchors + i]
+        const height = flat[3 * numAnchors + i]
+        const conf = flat[4 * numAnchors + i]
+        if (conf < confThreshold) continue
+
+        const scaleX = imgWidth / 640
+        const scaleY = imgHeight / 640
+
+        const x = (x_center - width / 2) * scaleX
+        const y = (y_center - height / 2) * scaleY
+        const w = width * scaleX
+        const h = height * scaleY
+
+        detections.push({ x, y, w, h, confidence: conf, class: 0 })
       }
     } else if (d2 === 5) {
       numAnchors = d1
       numAttrs = d2
       if (frameCount.current === 1) {
-        console.log("✅ Formato detectado: [1, 8400, 5]")
+        console.log("✅ Formato detectado: [1, 8400, 5] - 1 clase")
       }
       for (let i = 0; i < numAnchors; i++) {
         const offset = i * numAttrs
@@ -153,7 +222,7 @@ const App = () => {
         const w = width * scaleX
         const h = height * scaleY
 
-        detections.push({ x, y, w, h, confidence: conf })
+        detections.push({ x, y, w, h, confidence: conf, class: 0 })
       }
     }
 
@@ -253,37 +322,61 @@ const App = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-      let knifeDetected = false
+      let weaponDetected = false
+      let knivesInFrame = 0
+      let gunsInFrame = 0
+      
       decoded.forEach((det) => {
-        const { x, y, w, h, confidence } = det
-        knifeDetected = true
-        ctx.strokeStyle = "#e74c3c"
+        const { x, y, w, h, confidence, class: classId } = det
+        weaponDetected = true
+        
+        // Clase 0: Cuchillo (Rojo), Clase 1: Pistola (Naranja)
+        const isKnife = classId === 0
+        const color = isKnife ? "#e74c3c" : "#ff8800"
+        const fillColor = isKnife ? "rgba(231,76,60,0.9)" : "rgba(255,136,0,0.9)"
+        const label = isKnife 
+          ? `CUCHILLO ${(confidence * 100).toFixed(0)}%` 
+          : `PISTOLA ${(confidence * 100).toFixed(0)}%`
+        
+        if (isKnife) knivesInFrame++
+        else gunsInFrame++
+        
+        ctx.strokeStyle = color
         ctx.lineWidth = 3
         ctx.strokeRect(x, y, w, h)
 
-        const label = `CUCHILLO ${(confidence * 100).toFixed(0)}%`
         ctx.font = "bold 16px Arial"
         const textWidth = ctx.measureText(label).width
-        ctx.fillStyle = "rgba(231,76,60,0.9)"
+        ctx.fillStyle = fillColor
         ctx.fillRect(x, y > 20 ? y - 25 : y, textWidth + 10, 20)
         ctx.fillStyle = "#fff"
         ctx.fillText(label, x + 5, y > 20 ? y - 8 : y + 14)
       })
 
       // Actualizar estado
-      if (knifeDetected) {
+      if (weaponDetected) {
         setDangerLevel('danger')
         setDetections(decoded)
-        setStatus("⚠️ CUCHILLO DETECTADO")
+        
+        let statusMsg = "⚠️ ARMA DETECTADA: "
+        if (knivesInFrame > 0) statusMsg += `${knivesInFrame} cuchillo(s) `
+        if (gunsInFrame > 0) statusMsg += `${gunsInFrame} pistola(s)`
+        setStatus(statusMsg)
 
-        // Capturar foto cada 2 segundos
+        // Capturar foto cada 2 segundos si está habilitado
         const now = Date.now()
         if (now - lastPhotoTime.current > 2000) {
           lastPhotoTime.current = now
-          console.log(`🚨 ¡¡¡CUCHILLO DETECTADO!!! - ${decoded.length} detección(es)`)
-          capturePhoto(canvas, decoded.length)
+          console.log(`🚨 ¡¡¡ARMA DETECTADA!!! - ${decoded.length} detección(es) (${knivesInFrame} cuchillos, ${gunsInFrame} pistolas)`)
+          
+          if (autoSaveImages) {
+            capturePhoto(canvas, decoded, knivesInFrame, gunsInFrame)
+          }
+          
           triggerAlert()
-          setTotalKnives(prev => prev + 1)
+          
+          if (knivesInFrame > 0) setTotalKnives(prev => prev + knivesInFrame)
+          if (gunsInFrame > 0) setTotalGuns(prev => prev + gunsInFrame)
         }
       } else {
         setDangerLevel('safe')
@@ -344,19 +437,26 @@ const App = () => {
     setTimeout(() => setShowAlert(false), 2500)
   }
 
-  const capturePhoto = (canvas, numDetections) => {
+  const capturePhoto = (canvas, detections, knives, guns) => {
     canvas.toBlob(blob => {
       if (!blob) return
 
       const timestamp = new Date()
-      const filename = `cuchillo_${timestamp.getTime()}.jpg`
+      let prefix = 'arma'
+      if (knives > 0 && guns === 0) prefix = 'cuchillo'
+      else if (guns > 0 && knives === 0) prefix = 'pistola'
+      else if (knives > 0 && guns > 0) prefix = 'multiple'
+      
+      const filename = `${prefix}_${timestamp.getTime()}.jpg`
       const url = URL.createObjectURL(blob)
 
       const photoData = {
         url,
         filename,
         timestamp: timestamp.toLocaleString(),
-        detections: numDetections
+        detections: detections.length,
+        knives,
+        guns
       }
 
       setCapturedPhotos(prev => [photoData, ...prev].slice(0, 20))
@@ -432,14 +532,14 @@ const App = () => {
     <div className="app">
       <div className="container">
         <header className="header">
-          <h1>🛡️ Sistema de Detección de Cuchillos</h1>
-          <p>YOLO11 + TensorFlow.js - Detección en tiempo real</p>
+          <h1>🛡️ Sistema de Detección de Armas</h1>
+          <p>YOLO11 + TensorFlow.js - Detección de cuchillos y pistolas en tiempo real</p>
         </header>
 
         {showAlert && (
           <div className="alert-banner">
             <AlertTriangle size={28} />
-            <span>⚠️ ¡Cuchillo detectado!</span>
+            <span>⚠️ ¡Arma detectada!</span>
           </div>
         )}
 
@@ -456,12 +556,43 @@ const App = () => {
             <div><strong>Tamaño mínimo:</strong> {MIN_SIZE_PIXELS}px</div>
             <div><strong>NMS IoU:</strong> {NMS_IOU_THRESHOLD * 100}%</div>
           </div>
+          <div style={{
+            marginTop: '15px',
+            padding: '10px',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+              fontWeight: 'bold',
+              color: '#333'
+            }}>
+              <input
+                type="checkbox"
+                checked={autoSaveImages}
+                onChange={(e) => setAutoSaveImages(e.target.checked)}
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  cursor: 'pointer'
+                }}
+              />
+              📸 Guardar imágenes automáticamente al detectar armas
+            </label>
+          </div>
           <p style={{
             margin: '10px 0 0 0',
             fontSize: '0.8rem',
             color: '#666'
           }}>
-            Para cambiar estos valores, edita las constantes en las líneas 22-24 del archivo App.jsx
+            Para cambiar los umbrales, edita las constantes en las líneas 22-24 del archivo App.jsx
           </p>
         </div>
 
@@ -526,6 +657,7 @@ const App = () => {
             <DetectionStats
               dangerLevel={dangerLevel}
               totalKnives={totalKnives}
+              totalGuns={totalGuns}
               detections={detections}
             />
           </div>
@@ -578,7 +710,8 @@ const App = () => {
                     color: '#ecf0f1'
                   }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
-                      🔪 {photo.detections} detección(es)
+                      {photo.knives > 0 && `🔪 ${photo.knives} cuchillo(s) `}
+                      {photo.guns > 0 && `🔫 ${photo.guns} pistola(s)`}
                     </div>
                     <div>🕒 {photo.timestamp}</div>
                     <div style={{

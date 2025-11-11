@@ -1,6 +1,6 @@
 import React from 'react'
 
-const DetectionStats = ({ dangerLevel, totalKnives, detections }) => {
+const DetectionStats = ({ dangerLevel, totalKnives, totalGuns, detections }) => {
   const getStatusClass = () => {
     switch (dangerLevel) {
       case 'danger':
@@ -36,15 +36,23 @@ const DetectionStats = ({ dangerLevel, totalKnives, detections }) => {
       
       <div className="detection-info">
         <div className="info-card">
-          <h3>Total Cuchillos Detectados</h3>
+          <h3>🔪 Cuchillos</h3>
           <p>{totalKnives}</p>
+        </div>
+        <div className="info-card">
+          <h3>🔫 Pistolas</h3>
+          <p>{totalGuns}</p>
         </div>
         <div className="info-card">
           <h3>Confianza Actual</h3>
           <p>{getCurrentConfidence()}%</p>
         </div>
         <div className="info-card">
-          <h3>Detecciones Totales</h3>
+          <h3>Total Armas</h3>
+          <p>{totalKnives + totalGuns}</p>
+        </div>
+        <div className="info-card">
+          <h3>Detecciones Activas</h3>
           <p>{detections.length}</p>
         </div>
         <div className="info-card">
