@@ -32,6 +32,9 @@ const App = () => {
   const [detectionHistory, setDetectionHistory] = useState([])
   const [capturedPhotos, setCapturedPhotos] = useState([])
   const [autoSaveImages, setAutoSaveImages] = useState(true)
+  const [currentCamera, setCurrentCamera] = useState(0)
+  const [cameras, setCameras] = useState([])
+  const [stream, setStream] = useState(null)
 
   // ============================================================
   // Inicialización
@@ -51,7 +54,15 @@ const App = () => {
       console.log("📦 Cargando modelo YOLO11 desde /model/model.json...")
       setStatus("Cargando modelo YOLO11...")
 
-      const model = await tf.loadGraphModel("/model/model.json")
+      // Agregar progreso de carga
+      const model = await tf.loadGraphModel("/model/model.json", {
+        onProgress: (fraction) => {
+          const progress = Math.round(fraction * 100)
+          setStatus(`Cargando modelo: ${progress}%`)
+          console.log(`📊 Progreso: ${progress}%`)
+        }
+      })
+      
       modelRef.current = model
 
       console.log("✅ Modelo YOLO11 cargado correctamente")
@@ -65,16 +76,53 @@ const App = () => {
   }
 
   // ============================================================
-  // 2️⃣ Iniciar cámara
+  // 2️⃣ Obtener lista de cámaras disponibles
   // ============================================================
-  const startCamera = async () => {
+  const getCameras = async () => {
     try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const videoDevices = devices.filter(device => device.kind === 'videoinput')
+      setCameras(videoDevices)
+      console.log("📹 Cámaras encontradas:", videoDevices.length)
+      return videoDevices
+    } catch (error) {
+      console.error("❌ Error al obtener cámaras:", error)
+      return []
+    }
+  }
+
+  // ============================================================
+  // 3️⃣ Iniciar cámara
+  // ============================================================
+  const startCamera = async (cameraIndex = 0) => {
+    try {
+      // Detener stream anterior si existe
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop())
+      }
+
       console.log("📹 Solicitando acceso a la cámara...")
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
-      videoRef.current.srcObject = stream
+      
+      // Obtener lista de cámaras
+      const availableCameras = await getCameras()
+      
+      let constraints = { video: true }
+      
+      // Si hay cámaras disponibles y se especificó un índice
+      if (availableCameras.length > 0 && cameraIndex < availableCameras.length) {
+        constraints = {
+          video: {
+            deviceId: { exact: availableCameras[cameraIndex].deviceId }
+          }
+        }
+      }
+
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints)
+      setStream(newStream)
+      videoRef.current.srcObject = newStream
 
       videoRef.current.onloadedmetadata = () => {
-        console.log("✅ Cámara obtenida:", stream.getVideoTracks()[0].label)
+        console.log("✅ Cámara obtenida:", newStream.getVideoTracks()[0].label)
         console.log(
           "📺 Video metadata cargada",
           videoRef.current.videoWidth,
@@ -90,6 +138,21 @@ const App = () => {
     } catch (error) {
       console.error("❌ Error al acceder a la cámara:", error)
     }
+  }
+
+  // ============================================================
+  // 4️⃣ Cambiar de cámara
+  // ============================================================
+  const switchCamera = async () => {
+    const availableCameras = await getCameras()
+    if (availableCameras.length <= 1) {
+      console.log("⚠️ Solo hay una cámara disponible")
+      return
+    }
+
+    const nextCameraIndex = (currentCamera + 1) % availableCameras.length
+    setCurrentCamera(nextCameraIndex)
+    await startCamera(nextCameraIndex)
   }
 
   // ============================================================
@@ -498,7 +561,7 @@ const App = () => {
     }
 
     setIsDetecting(true)
-    await startCamera()
+    await startCamera(currentCamera)
 
     setTimeout(() => {
       const video = videoRef.current
@@ -632,22 +695,6 @@ const App = () => {
                 }}
               />
             </div>
-
-            <div style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button
-                onClick={loadModel}
-                className="btn btn-primary"
-              >
-                📦 Cargar Modelo
-              </button>
-              <button
-                onClick={startDetection}
-                className="btn btn-primary"
-                disabled={!modelRef.current || isDetecting}
-              >
-                🎬 Iniciar Detección
-              </button>
-            </div>
             <p style={{ textAlign: 'center', marginTop: '15px', fontSize: '1.1rem', color: '#333' }}>{status}</p>
           </div>
 
@@ -661,6 +708,38 @@ const App = () => {
               detections={detections}
             />
           </div>
+        </div>
+
+        {/* Botones de control debajo de los cards */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'center', 
+          gap: '15px', 
+          marginTop: '20px', 
+          marginBottom: '20px',
+          flexWrap: 'wrap'
+        }}>
+          <button
+            onClick={loadModel}
+            className="btn btn-primary"
+          >
+            📦 Cargar Modelo
+          </button>
+          <button
+            onClick={startDetection}
+            className="btn btn-primary"
+            disabled={!modelRef.current || isDetecting}
+          >
+            🎬 Iniciar Detección
+          </button>
+          <button
+            onClick={switchCamera}
+            className="btn btn-primary"
+            disabled={cameras.length <= 1}
+            title={cameras.length <= 1 ? "Solo hay una cámara disponible" : `Cambiar a cámara ${(currentCamera + 2) % cameras.length + 1}`}
+          >
+            🔄 Cambiar Cámara {cameras.length > 1 && `(${currentCamera + 1}/${cameras.length})`}
+          </button>
         </div>
 
         <div className="card reports-section">
